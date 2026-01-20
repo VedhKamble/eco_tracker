@@ -3,19 +3,20 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 from fastapi.middleware.cors import CORSMiddleware
-import sqlite3
 import os
 import time
-import openai
-from calculator import calculate_carbon_for_entry
+from openai import OpenAI
+from dotenv import load_dotenv
+from backend.calculator import calculate_carbon_for_entry
+from database.eco_tracker_db import create_connection
 
-# Load OPENAI_API_KEY from env
+load_dotenv()
+
+#--- Loading OpenAI API Key ---
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-if OPENAI_API_KEY:
-    openai.api_key = OPENAI_API_KEY
+client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
-DB_PATH = os.getenv("ECOTRACKER_DB")
-
+#--- FastAPI app setup --   
 app = FastAPI(title="EcoTracker API")
 
 app.add_middleware(
@@ -25,103 +26,105 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- DB helpers (very small wrapper using sqlite3) ---
-def init_db():
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT UNIQUE,
-        points INTEGER DEFAULT 0,
-        streak INTEGER DEFAULT 0,
-        last_log_date TEXT
-    )""")
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS logs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER,
-        date TEXT,
-        travel_km REAL,
-        travel_mode TEXT,
-        electricity_kwh REAL,
-        food TEXT,
-        water_liters REAL,
-        footprint_kg REAL,
-        FOREIGN KEY(user_id) REFERENCES users(id)
-    )""")
-    conn.commit()
-    conn.close()
-
-init_db()
 
 # --- Pydantic models ---
+class username(BaseModel):
+    id: int
+    name: str
+
 class Entry(BaseModel):
     name: str
     travel_km: float = 0.0
     travel_mode: Optional[str] = "car"   # car, bus, bike, walk
     electricity_kwh: float = 0.0
     food: Optional[str] = "veg"         # veg / non-veg
-    water_liters: float = 0.0
+    water_lts: float = 0.0
     date: Optional[str] = None          # YYYY-MM-DD (optional)
 
 class TipRequest(BaseModel):
     name: str
     footprint_kg: float
     focus_area: Optional[str] = None    # "transport", "electricity", "food", etc.
+    use_ai: bool = False                # whether to use AI for tip generation
 
-# --- Helper functions ---
-def get_user(name: str):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT id, name, points, streak, last_log_date FROM users WHERE name = ?", (name,))
-    r = c.fetchone()
-    conn.close()
-    return r
-
-def create_user(name: str):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    try:
-        c.execute("INSERT INTO users (name) VALUES (?)", (name,))
-        conn.commit()
-    except sqlite3.IntegrityError:
-        pass
-    conn.close()
-
-def add_log_and_update_user(name: str, entry: Entry, footprint: float):
-    create_user(name)
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT id, last_log_date, streak FROM users WHERE name = ?", (name,))
-    user = c.fetchone()
-    user_id = user[0]
-    last_date = user[1]
-    streak = user[2] or 0
-    # Check if date is today to avoid double counting; simple logic:
-    today = entry.date or time.strftime("%Y-%m-%d")
-    if last_date != today:
-        streak = streak + 1
-    # insert log
-    c.execute("""
-    INSERT INTO logs (user_id, date, travel_km, travel_mode, electricity_kwh, food, water_liters, footprint_kg)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    """, (user_id, today, entry.travel_km, entry.travel_mode, entry.electricity_kwh, entry.food, entry.water_liters, footprint))
-    # update user points & streak & last_log_date
-    points_gain = int(max(1, round(100 - footprint)))  # gamified; less footprint -> more points
-    new_points = (get_user_points(name) or 0) + points_gain
-    c.execute("UPDATE users SET points = ?, streak = ?, last_log_date = ? WHERE id = ?", (new_points, streak, today, user_id))
+# --- User Create & Fetch User functions ---
+def create_user(id,name):
+    conn = create_connection(db=True)
+    if not conn:
+        raise Exception("Database connection failed")
+    mycur = conn.cursor()
+    mycur.execute("INSERT INTO users (id,name) VALUES (%s,%s)", (id,name,))
+    print("User created successfully.")
     conn.commit()
     conn.close()
-    return {"points_gain": points_gain, "streak": streak, "points": new_points}
+def get_user(name):
+    conn = create_connection(db=True)
+    mycur = conn.cursor()
+    mycur.execute("SELECT id, name, points, streak, last_log_date FROM users WHERE name = %s", (name,))
+    user = mycur.fetchone()
+    conn.commit()
+    conn.close()
+    return user
 
-def get_user_points(name: str):
-    r = get_user(name)
-    if not r:
+
+
+#--- Log Entry & Update User Stats ---
+def add_log_and_update_user(name: str, entry: Entry, footprint: float):
+    conn = create_connection(db= True)
+    mycur = conn.cursor()
+
+    mycur.execute("SELECT id, last_log_date, streak FROM users WHERE name = %s", (name,))
+    user = mycur.fetchone()
+    if not user:
+        conn.close()
+        raise Exception("User not found")
+    
+    user_id, streak = user[0], user[2]
+    today = entry.date or time.strftime("%Y-%m-%d")
+
+    #-- Prevent duplicate logs for same day --
+    mycur.execute("SELECT COUNT(*) FROM logs WHERE user_id = %s AND date = %s", (user_id, today))
+    already_logged = mycur.fetchone()[0]
+    if already_logged > 0:
+        streak = streak           # unchanged
+        return "You already logged once!!!"  
+    else:
+        streak += 1
+
+    #-- Insert Log Data of User --
+    mycur.execute("""
+    INSERT INTO logs (user_id, date, travel_km, travel_mode, electricity_kwh, food, water_lts, footprint_kg)
+    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""", 
+    (user_id, today, entry.travel_km, entry.travel_mode, entry.electricity_kwh, entry.food, entry.water_lts, footprint))
+    print("User log entry added successfully.")
+
+    # -- Update user points, streak & last_log_date --
+    points_gain = int(max(1, round(100 - footprint)))  # gamified; less footprint -> more points
+    mycur.execute("SELECT points FROM users WHERE id = %s", (user_id,))
+    current_points = mycur.fetchone()[0]
+    new_points = current_points + points_gain
+    mycur.execute("UPDATE users SET points = %s, streak = %s, last_log_date = %s WHERE id = %s", (new_points, streak, today, user_id))
+    points = {"points_gain": points_gain, "streak": streak, "points": new_points}
+    conn.commit()
+    conn.close()
+    return points
+
+'''def get_user_points(name: str):
+    usr = get_user(name)
+    if not usr:
         return None
-    return r[2]
+    return usr[2]'''
 
 # --- Routes ---
+@app.post("/create_user")
+def new_user(user: username):
+    try:
+        create_user(user.id,user.name)
+        return {"message": f"User '{user.name}' created successfully."}
+    except Exception as e:
+        print("CREATE USER ERROR:", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/calculate_footprint")
 def calculate_footprint(entry: Entry):
     try:
@@ -152,36 +155,41 @@ def generate_tip(req: TipRequest):
         "food": "Choose plant-based meals more often; try 'meat-free Mondays'.",
         None: "Small daily actions add up. Track habits and aim to reduce one high-impact activity weekly."
     }
-    if not OPENAI_API_KEY:
-        return {"tip": fallback_tips.get(req.focus_area, fallback_tips[None])}
-    # If OpenAI key available: call Chat Completion
-    prompt = f"""
-You are an empathetic eco-coach. The user {req.name} produced {req.footprint_kg:.2f} kg CO2 today.
-Give one concise tip (2-3 short sentences) focused on {req.focus_area or 'general'} actions to reduce footprint tomorrow.
-Include one measurable action and a simple reason.
-"""
-    try:
-        resp = openai.ChatCompletion.create(
-            model="gpt-4o-mini" if "gpt-4o-mini" in openai.Model.list() else "gpt-4o",
-            messages=[{"role":"system","content":"You are a helpful eco coach."},{"role":"user","content":prompt}],
-            max_tokens=120,
-            temperature=0.6
-        )
-        text = resp["choices"][0]["message"]["content"].strip()
-        return {"tip": text}
-    except Exception as e:
+    if req.use_ai and client:
+        # If OpenAI key available: call Chat Completion
+        prompt = f"""
+    You are an empathetic eco-coach. The user {req.name} produced {req.footprint_kg:.2f} kg CO2 today.
+    Give one concise tip (2-3 short sentences) focused on {req.focus_area or 'general'} actions to reduce footprint tomorrow.
+    Include one measurable action and a simple reason.
+    """
+        try:
+            model_name="gpt-4o-mini"
+            resp = client.chat.completions.create(
+                model=model_name,
+                messages=[{"role":"system","content":"You are a helpful eco coach."},
+                {"role":"user","content":prompt}],
+                max_tokens=120,
+                temperature=0.6
+            )
+            text = resp["choices"][0]["message"]["content"].strip()
+            return {"tip": text}
+        except Exception as e:
+            return {"note": f"openai_error:{str(e)}"}
+    else:
         # fallback if OpenAI call fails
-        return {"tip": fallback_tips.get(req.focus_area, fallback_tips[None]), "note": f"openai_error:{str(e)}"}
+        return {"tip": fallback_tips.get(req.focus_area, fallback_tips[None])}
+    
 
-@app.get("/user_stats/{name}")
-def user_stats(name: str):
+@app.get("/get_user_stats")
+def user_stats(name: dict):
+    conn = create_connection(db= True)
+    mycur = conn.cursor()
     u = get_user(name)
     if not u:
         raise HTTPException(status_code=404, detail="User not found")
     user_id = u[0]
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT date, footprint_kg FROM logs WHERE user_id = ? ORDER BY date DESC LIMIT 30", (user_id,))
-    logs = c.fetchall()
+    mycur.execute("SELECT date, footprint_kg FROM logs WHERE user_id = %s ORDER BY date DESC LIMIT 30", (user_id,))
+    logs = mycur.fetchall()
+    conn.commit()
     conn.close()
     return {"name": u[1], "points": u[2], "streak": u[3], "logs": [{"date": d, "footprint_kg": f} for d,f in logs]}
