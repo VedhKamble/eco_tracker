@@ -1,45 +1,42 @@
-eco_tracker
+🌱 EcoTracker – Carbon Footprint & Sustainability Tracker
 
-A simple carbon calculator & habit tracker project built in Python — designed to help users estimate their carbon emissions with minimal input, learn actionable insights, and start sustainable habits.
+EcoTracker is a Python-based sustainability tracking application designed to help users calculate their daily carbon footprint, receive eco-friendly tips, and track progress toward sustainable living. The project focuses on simplifying carbon tracking by reducing complex inputs and providing a user-friendly interface.
 
-🚀 Overview
-eco_tracker is a lightweight Python-based tool that calculates carbon emissions based on user inputs and helps visualize sustainability impact. The project includes both backend logic and a basic frontend interface so users can interactively calculate and track their carbon footprint.
+🚀 Features Implemented
 
-🔍 Features
-🌱 Minimal input carbon footprint calculator
-📊 Clean, intuitive frontend interface
-🔁 Easy customization for new carbon categories
-🔌 Modular Python structure (calculator.py, api_client.py, backend_main.py, frontend_app.py)
-✨ Designed for expandability (habit tracking, daily nudges, personalized tips)
+✅ User creation and management
+✅ Daily carbon footprint calculation
+✅ AI-powered eco tips using OpenAI API
+✅ MySQL database integration
+✅ Backend built with FastAPI
+✅ Frontend built with Streamlit
+✅ Modular and structured project design
+
+🛠️ Tech Stack
+
+1) Frontend: Streamlit
+2) Backend: FastAPI
+3) Database: MySQL
+4) AI Integration: OpenAI API
+5) Language: Python
+
+⚠️ Current Project Status (Important)
+
+Note: This project is currently partially complete.
+Due to time constraints and parallel academic/internship commitments, the following issues are known and pending:
+❌ Log entry data is not consistently being inserted into the logs table
+❌ User statistics (points/streak) endpoint may return errors in some cases
+❌ Frontend UI does not always display success/error messages correctly for all API calls
+These issues are primarily related to API integration and frontend–backend synchronization, and not the overall project structure.
 
 🗂️ Repository Structure
 eco_tracker/
 ├── api_client.py          # API integrations (if any)
 ├── backend_main.py        # Main backend logic & routing
 ├── calculator.py          # Carbon calculation functions
-├── frontend_app.py        # Frontend interface logic
+├── frontend_app.py        # USer Interface logic
 ├── README.md             # This documentation
 
-Installation
-
-1) Clone the repo
-   git clone https://github.com/VedhKamble/eco_tracker.git
-   cd eco_tracker
-   
-2) Create a Python virtual environment
-   python3 -m venv env
-   source env/bin/activate  # (Windows: env\Scripts\activate)
-   
-3) Install dependencies
-   pip install -r requirements.txt
-
- Usage
-1) Run the calculator
-   python backend_main.py
-   Follow prompts or open the local interface (if GUI/CLI menu implemented via frontend_app.py).
-
-2) Run the frontend interface
-   python frontend_app.py
 
 How It Works
 1) calculator.py — Core logic computes carbon emissions based on input factors such as transportation, energy use, and habits.
@@ -47,8 +44,19 @@ How It Works
 3) backend_main.py — Orchestrates calculation flows and ties backend logic with UI.
 4) frontend_app.py — Provides the user-facing interface to interact with.
 
-Future Plans
-1) Add daily habit tracking and reminders
-2) Track weekly/monthly carbon trends
-3) Export reports (CSV/PDF)
-4) Mobile-friendly UI or web dashboard
+Future Improvements:-
+
+1) Fix log entry insertion logic
+2) Stabilize user statistics retrieval
+3) Improve frontend feedback and error handling
+4) Add habit streak visualization
+5) Refactor DB layer using ORM (SQLAlchemy)
+
+📄 Disclaimer
+
+This project was developed as part of a learning and internship-focused initiative. While core functionality is implemented, some features require further debugging and refinement. Contributions and improvements are welcome.
+
+👤 Author
+
+Vedh Kamble
+Computer Science Student | Python Developer | Cybersecurity & AI Enthusiast
